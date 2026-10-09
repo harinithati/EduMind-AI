@@ -1062,9 +1062,10 @@ for step, action in enumerate(
     st.subheader("💬 Ask Questions About Your PDF")
 
     question = st.text_area(
-        "Enter your question",
-        placeholder="Example: What is the difference between Moore and Mealy machines?"
-    )
+    "Enter your question",
+    placeholder="Example: What is the difference between Moore and Mealy machines?",
+    key="study_material_question"
+)
 
     if st.button("Ask EduMind AI"):
 
