@@ -169,7 +169,160 @@ STUDENT QUESTION:
     )
 
     return response.text or "No answer was generated."
+import json
+import re
 
+
+def generate_rag_quiz(topic, difficulty="Medium", number_of_questions=5):
+
+    if client is None:
+        raise ValueError("Gemini API key is missing.")
+
+    chunks = st.session_state.get("rag_chunks", [])
+    index = st.session_state.get("rag_index")
+
+    if not chunks or index is None:
+        raise ValueError(
+            "Please upload and process a study PDF first."
+        )
+
+    retrieved = search_pdf(
+        topic,
+        chunks,
+        index,
+        top_k=5
+    )
+
+    context = "\n\n".join(
+        item["text"] for item in retrieved
+    )
+
+    prompt = f"""
+You are EduMind AI, an educational assessment designer.
+
+Create {number_of_questions} multiple-choice questions
+based ONLY on the supplied study material.
+
+Topic: {topic}
+Difficulty: {difficulty}
+
+Return ONLY valid JSON in this format:
+{{
+  "questions": [
+    {{
+      "question": "Question text",
+      "options": {{
+        "A": "Option A",
+        "B": "Option B",
+        "C": "Option C",
+        "D": "Option D"
+      }},
+      "answer": "A",
+      "explanation": "Explanation supported by the study material"
+    }}
+  ]
+}}
+
+STUDY MATERIAL:
+{context}
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    raw_text = response.text or ""
+    raw_text = re.sub(
+        r"^```(?:json)?\s*|\s*```$",
+        "",
+        raw_text.strip()
+    )
+
+    data = json.loads(raw_text)
+    questions = data["questions"]
+
+    if not questions:
+        raise ValueError("No questions were generated.")
+
+    return questions
+
+def generate_learning_path(score, topic, difficulty):
+
+    if score < 40:
+        level = "Foundation"
+        next_difficulty = "Easy"
+        actions = [
+            "Review the definitions and fundamental concepts.",
+            "Study the relevant sections of your uploaded PDF.",
+            "Practise basic questions before attempting another quiz."
+        ]
+
+    elif score < 70:
+        level = "Developing"
+        next_difficulty = "Medium"
+        actions = [
+            "Review the questions you answered incorrectly.",
+            "Revise the concepts related to those questions.",
+            "Practise medium-difficulty questions."
+        ]
+
+    elif score < 90:
+        level = "Proficient"
+        next_difficulty = "Hard"
+        actions = [
+            "Practise application-based questions.",
+            "Compare related concepts and identify their differences.",
+            "Attempt a harder quiz to test your understanding."
+        ]
+
+    else:
+        level = "Advanced"
+        next_difficulty = "Advanced"
+        actions = [
+            "Attempt advanced application-based questions.",
+            "Solve challenging problems related to the topic.",
+            "Review the topic periodically to retain your knowledge."
+        ]
+
+    return {
+        "topic": topic,
+        "score": score,
+        "current_difficulty": difficulty,
+        "learning_level": level,
+        "recommended_difficulty": next_difficulty,
+        "actions": actions
+    }
+
+import csv
+import os
+
+PROGRESS_FILE = "student_progress.csv"
+
+
+def save_quiz_progress(topic, difficulty, score):
+    file_exists = os.path.exists(PROGRESS_FILE)
+
+    with open(PROGRESS_FILE, "a", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "date",
+                "topic",
+                "difficulty",
+                "score"
+            ]
+        )
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "topic": topic,
+            "difficulty": difficulty,
+            "score": score
+        })
 def answer_from_pdf(question, pdf_text):
 
     if not pdf_text or not pdf_text.strip():
@@ -468,35 +621,175 @@ Respond to the latest student question.
 # ---------- ADAPTIVE QUIZ ----------
 elif page == "Adaptive Quiz":
 
-    st.markdown("## 📝 Adaptive Knowledge Assessment")
+    st.markdown("## 📝 AI-Powered Adaptive Assessment")
+    st.write("Generate quizzes grounded in your uploaded study material.")
 
-    topic = st.text_input(
-        "Topic",
-        "Moore and Mealy Machines"
-    )
+    if not st.session_state.get("rag_chunks"):
+        st.warning(
+            "Please upload and process a PDF in Study Materials first."
+        )
 
-    difficulty = st.selectbox(
-        "Difficulty",
-        ["Easy", "Medium", "Hard", "Advanced"]
-    )
+    else:
+        topic = st.text_input(
+            "Quiz Topic",
+            placeholder="e.g., Moore and Mealy Machines"
+        )
 
-    number = st.slider(
-        "Number of questions",
-        min_value=3,
-        max_value=10,
-        value=5
-    )
+        difficulty = st.selectbox(
+            "Difficulty Level",
+            ["Easy", "Medium", "Hard", "Advanced"]
+        )
 
-    st.info(
-        "The finished quiz module will generate questions from "
-        "your uploaded study material and evaluate your answers."
-    )
+        number = st.slider(
+            "Number of Questions",
+            min_value=3,
+            max_value=10,
+            value=5
+        )
 
-    st.button(
-        "Generate Assessment",
-        use_container_width=True,
-        disabled=True
-    )
+        if st.button("Generate AI Quiz", type="primary"):
+
+            if not topic.strip():
+                st.warning("Please enter a topic.")
+
+            else:
+                try:
+                    with st.spinner("Generating your quiz..."):
+                        questions = generate_rag_quiz(
+                            topic=topic,
+                            difficulty=difficulty,
+                            number_of_questions=number
+                        )
+
+                    st.session_state["active_quiz"] = questions
+                    st.session_state["quiz_submitted"] = False
+                    st.session_state["quiz_answers"] = {}
+
+                    st.success(
+                        f"Generated {len(questions)} questions!"
+                    )
+
+                except Exception as e:
+                    st.error("Unable to generate the quiz.")
+                    st.exception(e)
+
+        questions = st.session_state.get("active_quiz", [])
+
+        if questions and not st.session_state.get(
+            "quiz_submitted", False
+        ):
+
+            st.divider()
+            st.markdown("### Answer the Questions")
+
+            with st.form("adaptive_quiz_form"):
+
+                answers = {}
+
+                for i, question in enumerate(questions):
+
+                    st.markdown(
+                        f"**Question {i + 1}: {question['question']}**"
+                    )
+
+                    options = question["options"]
+
+                    selected = st.radio(
+                        "Choose one answer:",
+                        options=list(options.keys()),
+                        format_func=lambda key: (
+                            f"{key}. {options[key]}"
+                        ),
+                        key=f"quiz_question_{i}",
+                        index=None
+                    )
+
+                    answers[i] = selected
+
+                    st.divider()
+
+                submitted = st.form_submit_button(
+                    "Submit Quiz",
+                    type="primary",
+                    use_container_width=True
+                )
+
+            if submitted:
+
+                score, results = evaluate_rag_quiz(
+                    questions,
+                    answers
+                )
+
+                st.session_state["quiz_score"] = score
+                st.session_state["quiz_results"] = results
+                st.session_state["quiz_submitted"] = True
+
+                st.session_state.quiz_history.append({
+                    "attempt": len(st.session_state.quiz_history) + 1,
+                    "topic": topic,
+                    "difficulty": difficulty,
+                    "score": score,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+
+                st.rerun()
+                save_quiz_progress(
+                    topic=topic,
+                    difficulty=difficulty,
+                    score=score
+                )
+
+        if st.session_state.get("quiz_submitted", False):
+
+            score = st.session_state["quiz_score"]
+            results = st.session_state["quiz_results"]
+
+            st.divider()
+            st.markdown("### 📊 Your Results")
+
+            col1, col2 = st.columns(2)
+
+            col1.metric("Quiz Score", f"{score:.1f}%")
+            col2.metric(
+                "Correct Answers",
+                f"{int((results['Result'] == 'Correct').sum())}"
+                f"/{len(results)}"
+            )
+
+            if score < 40:
+                st.warning(
+                    "Review the fundamentals and try an easier quiz."
+                )
+            elif score < 70:
+                st.info(
+                    "Revise the concepts you missed and practise again."
+                )
+            elif score < 90:
+                st.success(
+                    "Good work! Try more application-based questions."
+                )
+            else:
+                st.balloons()
+                st.success(
+                    "Excellent performance! Try advanced questions."
+                )
+
+            for i, row in results.iterrows():
+
+                with st.expander(
+                    f"Question {i + 1}: {row['Result']}"
+                ):
+                    st.write(row["Question"])
+                    st.write("Your answer:", row["Your Answer"])
+                    st.write("Correct answer:", row["Correct Answer"])
+                    st.write("Explanation:", row["Explanation"])
+
+            if st.button("Start Another Quiz"):
+                st.session_state["active_quiz"] = []
+                st.session_state["quiz_submitted"] = False
+                st.session_state["quiz_answers"] = {}
+                st.rerun()
 
 
 # ---------- SKILL GAP ----------
@@ -566,6 +859,26 @@ if "tutor_messages" not in st.session_state:
 
 if "tutor_history" not in st.session_state:
     st.session_state.tutor_history = []
+
+if os.path.exists(PROGRESS_FILE):
+    progress_df = pd.read_csv(PROGRESS_FILE)
+
+    st.markdown("### 📚 Recorded Quiz History")
+
+    st.dataframe(
+        progress_df,
+        use_container_width=True
+    )
+
+    if not progress_df.empty:
+        st.download_button(
+            "Download Progress Report",
+            data=progress_df.to_csv(index=False),
+            file_name="edumind_progress.csv",
+            mime="text/csv"
+        )
+else:
+    st.info("Complete a quiz to begin recording progress.")
 
 # ---------- STUDY MATERIALS ----------
 elif page == "Study Materials":
@@ -649,6 +962,32 @@ elif page == "Study Materials":
                     except Exception as e:
                         st.error("Unable to answer this question.")
                         st.exception(e)
+
+    st.divider()
+
+st.markdown("### 🎯 Your Personalized Learning Path")
+
+learning_path = generate_learning_path(
+    score=st.session_state["quiz_score"],
+    topic=topic,
+    difficulty=difficulty
+)
+
+st.info(
+    f"Learning Level: {learning_path['learning_level']}"
+)
+
+st.metric(
+    "Recommended Next Difficulty",
+    learning_path["recommended_difficulty"]
+)
+
+st.markdown("#### 📚 Recommended Actions")
+
+for step, action in enumerate(
+    learning_path["actions"], start=1
+):
+    st.write(f"**{step}.** {action}")
 
 
     st.divider()
