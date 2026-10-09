@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from google import genai
+from pypdf import PdfReader
+import io
 
 st.set_page_config(
     page_title="EduMind AI | Learning Intelligence",
@@ -21,6 +23,59 @@ def get_gemini_client():
 
 
 client = get_gemini_client()
+def extract_pdf_text(uploaded_file):
+    reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
+
+    pages = []
+
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_text = page.extract_text() or ""
+
+        if page_text.strip():
+            pages.append(
+                f"Page {page_number}:\n{page_text}"
+            )
+
+    return "\n\n".join(pages)
+
+def answer_from_pdf(question, pdf_text):
+
+    if not pdf_text or not pdf_text.strip():
+        return "Please upload and process a PDF first."
+
+    if client is None:
+        return "Gemini API key is missing. Check Streamlit Secrets."
+
+    # Limit context to avoid sending an excessively large prompt.
+    context = pdf_text[:30000]
+
+    prompt = f"""
+You are EduMind AI, an educational assistant.
+
+Answer the student's question using the provided study material.
+
+Rules:
+1. Use the study material as your primary source.
+2. Do not invent facts that are not supported by the material.
+3. If the answer is not found in the material, say so clearly.
+4. Explain the answer in simple language.
+5. Include the relevant page number if it is available in the context.
+
+STUDY MATERIAL:
+{context}
+
+STUDENT QUESTION:
+{question}
+
+Provide a clear, structured answer.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    return response.text or "No answer was generated."
 # ---------- PROFESSIONAL DESIGN ----------
 st.markdown("""
 <style>
@@ -363,31 +418,74 @@ elif page == "Study Materials":
     st.markdown("## 📚 Study Material Library")
 
     uploaded_file = st.file_uploader(
-        "Upload a study material PDF",
+        "Upload your study material",
         type=["pdf"]
     )
 
     if uploaded_file:
-        st.session_state.study_material_name = uploaded_file.name
+        if st.button("Process Study Material"):
 
-        st.success(f"Uploaded: {uploaded_file.name}")
+            with st.spinner("Extracting PDF text..."):
+                try:
+                    pdf_text = extract_pdf_text(uploaded_file)
 
-        st.info(
-            "PDF extraction, semantic search, and grounded AI answers "
-            "will be connected in the next implementation step."
+                    if pdf_text.strip():
+                        st.session_state["pdf_text"] = pdf_text
+                        st.session_state["pdf_name"] = uploaded_file.name
+
+                        st.success("PDF processed successfully!")
+                        st.write("File:", uploaded_file.name)
+                        st.write(
+                            "Extracted characters:",
+                            len(pdf_text)
+                        )
+                    else:
+                        st.warning(
+                            "No readable text found in this PDF."
+                        )
+
+                except Exception as e:
+                    st.error("Unable to process this PDF.")
+                    st.caption(str(e))
+
+    if st.session_state.get("pdf_text"):
+        st.success(
+            f"Loaded material: {st.session_state['pdf_name']}"
         )
 
-    if st.session_state.study_material_name:
-        st.write(
-            "Current session file:",
-            st.session_state.study_material_name
-        )
+        with st.expander("Preview extracted text"):
+            st.text(st.session_state["pdf_text"][:4000])
 
 
-st.divider()
+    st.divider()
 
-st.caption(
-    f"EduMind AI • Learning Intelligence Platform • "
-    f"{datetime.now().year} • SDG 4"
-)
+    st.subheader("💬 Ask Questions About Your PDF")
+
+    question = st.text_area(
+        "Enter your question",
+        placeholder="Example: What is the difference between Moore and Mealy machines?"
+    )
+
+    if st.button("Ask EduMind AI"):
+
+        pdf_text = st.session_state.get("pdf_text", "")
+
+        if not pdf_text:
+            st.warning("Upload and process a PDF first.")
+
+        elif not question.strip():
+            st.warning("Please enter a question.")
+
+        else:
+            with st.spinner("Finding an answer in your study material..."):
+
+                try:
+                    answer = answer_from_pdf(question, pdf_text)
+
+                    st.markdown("### 📘 Answer")
+                    st.write(answer)
+
+                except Exception as e:
+                    st.error("Unable to generate an answer.")
+                    st.caption(str(e))
 
