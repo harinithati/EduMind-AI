@@ -1056,29 +1056,50 @@ for step, action in enumerate(
 ):
     st.write(f"**{step}.** {action}")
 
+    if st.session_state.get("rag_index") is not None:
 
-    st.divider()
+        st.divider()
+        st.subheader("💬 Ask Questions About Your PDF")
 
-    st.subheader("💬 Ask Questions About Your PDF")
+        question = st.text_area(
+            "Enter your question",
+            placeholder="Example: What is the difference between Moore and Mealy machines?",
+            key="pdf_question_input"
+        )
 
-question = st.text_area(
-    "Enter your question",
-    placeholder="Example: What is the difference between Moore and Mealy machines?",
-    key="pdf_question_input"
-)
+        if st.button("Ask EduMind AI", key="ask_edumind_pdf_button"):
 
-    if st.button("Ask EduMind AI"):
+            if not question.strip():
+                st.warning("Please enter a question.")
 
-        pdf_text = st.session_state.get("pdf_text", "")
+            else:
+                try:
+                    with st.spinner("Finding relevant information..."):
 
-        if not pdf_text:
-            st.warning("Upload and process a PDF first.")
+                        rag_chunks = st.session_state["rag_chunks"]
+                        rag_index = st.session_state["rag_index"]
 
-        elif not question.strip():
-            st.warning("Please enter a question.")
+                        retrieved_chunks = search_pdf(
+                            question,
+                            rag_chunks,
+                            rag_index,
+                            top_k=3
+                        )
 
-        else:
-            with st.spinner("Finding an answer in your study material..."):
+                        answer = answer_from_retrieved_chunks(
+                            question,
+                            retrieved_chunks
+                        )
+
+                    st.markdown("### 🤖 EduMind AI Answer")
+                    st.write(answer)
+
+                except Exception as e:
+                    st.error("Unable to answer your question. Please try again.")
+                    st.exception(e)
+
+    else:
+        st.info("📄 Upload and process a PDF to start asking questions.")
 
                 try:
                     answer = answer_from_pdf(question, pdf_text)
