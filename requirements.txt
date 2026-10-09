@@ -5,3 +5,4 @@ faiss-cpu
 pandas
 numpy
 matplotlib
+plotly
