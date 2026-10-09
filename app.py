@@ -1030,7 +1030,8 @@ elif page == "Study Materials":
                         st.exception(e)
 
     st.divider()
-
+topic = st.session_state.get("quiz_topic", "Theory of Automata and Formal Languages")
+difficulty = st.session_state.get("quiz_difficulty", "Medium")
 st.markdown("### 🎯 Your Personalized Learning Path")
 
 learning_path = generate_learning_path(
