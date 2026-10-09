@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from google import genai
 
 st.set_page_config(
     page_title="EduMind AI | Learning Intelligence",
@@ -9,7 +10,17 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+@st.cache_resource
+def get_gemini_client():
+    api_key = st.secrets.get("GEMINI_API_KEY")
 
+    if not api_key:
+        return None
+
+    return genai.Client(api_key=api_key)
+
+
+client = get_gemini_client()
 # ---------- PROFESSIONAL DESIGN ----------
 st.markdown("""
 <style>
@@ -200,11 +211,10 @@ if page == "Overview":
 elif page == "AI Learning Tutor":
 
     st.markdown("## 🤖 AI Learning Tutor")
-    st.write("Ask questions and learn concepts in simple language.")
 
     question = st.text_area(
         "What would you like to learn?",
-        placeholder="Example: Explain the difference between Moore and Mealy machines."
+        placeholder="Explain Moore and Mealy machines with examples."
     )
 
     level = st.selectbox(
@@ -213,12 +223,39 @@ elif page == "AI Learning Tutor":
     )
 
     if st.button("Generate Explanation", use_container_width=True):
+
         if not question.strip():
             st.warning("Please enter a question.")
+
+        elif client is None:
+            st.error(
+                "Gemini API key is missing. "
+                "Add GEMINI_API_KEY in Streamlit Secrets."
+            )
+
         else:
-            st.info(
-                "The interface is ready. Gemini API integration "
-                "and PDF-grounded answers are the next implementation step."
+            with st.spinner("Generating your explanation..."):
+
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=(
+                            f"Act as an educational tutor. "
+                            f"Explain at a {level} level. "
+                            f"Use simple language, examples, and a short summary.\n\n"
+                            f"Student question: {question}"
+                        )
+                    )
+
+                    st.markdown("### 📘 AI Explanation")
+                    st.write(response.text)
+
+                except Exception as e:
+                    st.error(
+                        "The AI request failed. Check the API key, "
+                        "model availability, quota, and connection."
+                    )
+                    st.caption(str(e))
             )
 
 
