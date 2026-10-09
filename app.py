@@ -37,6 +37,138 @@ def extract_pdf_text(uploaded_file):
             )
 
     return "\n\n".join(pages)
+def split_text_into_chunks(text, chunk_size=1200, overlap=200):
+    """
+    Divide extracted PDF text into overlapping chunks.
+    Overlap helps preserve context between adjacent chunks.
+    """
+    if not text or not text.strip():
+        return []
+
+    if overlap >= chunk_size:
+        raise ValueError("Overlap must be smaller than chunk size.")
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += chunk_size - overlap
+
+    return chunks
+
+import numpy as np
+import faiss
+
+
+def create_semantic_index(text_chunks):
+    """Create a FAISS index for the supplied PDF text chunks."""
+
+    if client is None:
+        raise ValueError("Gemini API key is missing.")
+
+    if not text_chunks:
+        raise ValueError("No text chunks were provided.")
+
+    embeddings = []
+
+    for chunk in text_chunks:
+        response = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=chunk,
+            config={"output_dimensionality": 768}
+        )
+
+        embeddings.append(response.embeddings[0].values)
+
+    embedding_matrix = np.asarray(embeddings, dtype="float32")
+
+    # Normalize vectors so inner product represents cosine similarity.
+    faiss.normalize_L2(embedding_matrix)
+
+    index = faiss.IndexFlatIP(embedding_matrix.shape[1])
+    index.add(embedding_matrix)
+
+    return index, embedding_matrix
+
+
+def search_pdf(question, text_chunks, index, top_k=3):
+    """Retrieve the most relevant PDF passages for a question."""
+
+    if client is None:
+        raise ValueError("Gemini API key is missing.")
+
+    response = client.models.embed_content(
+        model="gemini-embedding-2",
+        contents=question,
+        config={"output_dimensionality": 768}
+    )
+
+    query_vector = np.asarray(
+        [response.embeddings[0].values],
+        dtype="float32"
+    )
+
+    faiss.normalize_L2(query_vector)
+
+    k = min(top_k, len(text_chunks))
+    scores, indices = index.search(query_vector, k)
+
+    results = []
+
+    for score, idx in zip(scores[0], indices[0]):
+        if idx >= 0:
+            results.append({
+                "text": text_chunks[idx],
+                "similarity": float(score)
+            })
+
+    return results
+def answer_from_retrieved_chunks(question, retrieved_chunks):
+
+    if client is None:
+        return "Gemini API key is missing. Check Streamlit Secrets."
+
+    if not retrieved_chunks:
+        return "No relevant information was found in the uploaded PDF."
+
+    context = "\n\n".join(
+        [
+            f"Passage {i + 1}:\n{item['text']}"
+            for i, item in enumerate(retrieved_chunks)
+        ]
+    )
+
+    prompt = f"""
+You are EduMind AI, an educational assistant.
+
+Answer the student's question using the retrieved study material below.
+
+Instructions:
+1. Use the retrieved passages as your primary source.
+2. Explain concepts clearly in student-friendly language.
+3. Do not invent information that is not supported by the passages.
+4. If the passages do not contain the answer, say so.
+5. Include a short example when supported by the material.
+
+STUDY MATERIAL:
+{context}
+
+STUDENT QUESTION:
+{question}
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    return response.text or "No answer was generated."
 
 def answer_from_pdf(question, pdf_text):
 
@@ -265,53 +397,72 @@ if page == "Overview":
 # ---------- AI TUTOR ----------
 elif page == "AI Learning Tutor":
 
-    st.markdown("## 🤖 AI Learning Tutor")
+    st.markdown("## 🤖 EduMind AI Tutor")
+    st.write("Ask questions and explore concepts interactively.")
 
-    question = st.text_area(
-        "What would you like to learn?",
-        placeholder="Explain Moore and Mealy machines with examples."
-    )
+    for message in st.session_state.tutor_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    level = st.selectbox(
-        "Explanation level",
-        ["Beginner", "Intermediate", "Advanced"]
-    )
+    question = st.chat_input("Ask your learning question...")
 
-    if st.button("Generate Explanation", use_container_width=True):
+    if question:
 
-        if not question.strip():
-            st.warning("Please enter a question.")
+        st.session_state.tutor_messages.append({
+            "role": "user",
+            "content": question
+        })
 
-        elif client is None:
-            st.error(
-                "Gemini API key is missing. "
-                "Add GEMINI_API_KEY in Streamlit Secrets."
-            )
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        if client is None:
+            answer = "Gemini API key is missing. Check Streamlit Secrets."
 
         else:
-            with st.spinner("Generating your explanation..."):
-
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=(
-                            f"Act as an educational tutor. "
-                            f"Explain at a {level} level. "
-                            f"Use simple language, examples, and a short summary.\n\n"
-                            f"Student question: {question}"
-                        )
-                    )
-
-                    st.markdown("### 📘 AI Explanation")
-                    st.write(response.text)
-
-                except Exception as e:
-                    st.error(
-                        "The AI request failed. Check the API key, "
-                        "model availability, quota, and connection."
-                    )
-                    st.caption(str(e))
+            conversation = "\n".join(
+                f"{m['role']}: {m['content']}"
+                for m in st.session_state.tutor_messages[-10:]
             )
+
+            prompt = f"""
+You are EduMind AI, a patient educational tutor.
+
+Explain concepts clearly, using examples where helpful.
+Adapt your explanation to the student's question.
+Use simple language unless advanced detail is requested.
+
+Conversation:
+{conversation}
+
+Respond to the latest student question.
+"""
+
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt
+                )
+
+                answer = response.text or "No response was generated."
+
+            except Exception:
+                answer = (
+                    "I couldn't generate an answer. "
+                    "Please check your Gemini API configuration and try again."
+                )
+
+        st.session_state.tutor_messages.append({
+            "role": "assistant",
+            "content": answer
+        })
+
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+
+    if st.button("Clear Conversation"):
+        st.session_state.tutor_messages = []
+        st.rerun()
 
 
 # ---------- ADAPTIVE QUIZ ----------
@@ -410,51 +561,94 @@ elif page == "Learning Progress":
             "Your progress chart will appear here after quiz results "
             "are recorded."
         )
+if "tutor_messages" not in st.session_state:
+    st.session_state.tutor_messages = []
 
+if "tutor_history" not in st.session_state:
+    st.session_state.tutor_history = []
 
 # ---------- STUDY MATERIALS ----------
 elif page == "Study Materials":
 
-    st.markdown("## 📚 Study Material Library")
+    st.markdown("## 📚 AI Study Material Assistant")
+    st.write("Upload a PDF and ask questions grounded in its content.")
 
     uploaded_file = st.file_uploader(
         "Upload your study material",
-        type=["pdf"]
+        type=["pdf"],
+        key="rag_pdf_upload"
     )
 
     if uploaded_file:
-        if st.button("Process Study Material"):
+        if st.button("Process PDF", type="primary"):
 
-            with st.spinner("Extracting PDF text..."):
+            with st.spinner("Extracting text and building the search index..."):
                 try:
                     pdf_text = extract_pdf_text(uploaded_file)
 
-                    if pdf_text.strip():
-                        st.session_state["pdf_text"] = pdf_text
-                        st.session_state["pdf_name"] = uploaded_file.name
-
-                        st.success("PDF processed successfully!")
-                        st.write("File:", uploaded_file.name)
-                        st.write(
-                            "Extracted characters:",
-                            len(pdf_text)
-                        )
+                    if not pdf_text.strip():
+                        st.error("No readable text found in this PDF.")
                     else:
-                        st.warning(
-                            "No readable text found in this PDF."
-                        )
+                        chunks, index = process_pdf_for_rag(pdf_text)
+
+                        st.session_state["rag_pdf_text"] = pdf_text
+                        st.session_state["rag_chunks"] = chunks
+                        st.session_state["rag_index"] = index
+                        st.session_state["rag_pdf_name"] = uploaded_file.name
+
+                        st.success("Study material processed successfully!")
+                        st.write("**File:**", uploaded_file.name)
+                        st.write("**Text chunks indexed:**", len(chunks))
 
                 except Exception as e:
-                    st.error("Unable to process this PDF.")
-                    st.caption(str(e))
+                    st.error("Unable to process the PDF.")
+                    st.exception(e)
 
-    if st.session_state.get("pdf_text"):
-        st.success(
-            f"Loaded material: {st.session_state['pdf_name']}"
+    if st.session_state.get("rag_index") is not None:
+
+        st.divider()
+        st.subheader("💬 Ask Your Study Material")
+
+        question = st.text_area(
+            "Enter your question",
+            placeholder="Explain the difference between Moore and Mealy machines.",
+            key="rag_question"
         )
 
-        with st.expander("Preview extracted text"):
-            st.text(st.session_state["pdf_text"][:4000])
+        if st.button("Ask EduMind AI", type="primary"):
+
+            if not question.strip():
+                st.warning("Please enter a question.")
+
+            else:
+                with st.spinner("Searching your PDF and generating an answer..."):
+                    try:
+                        retrieved_chunks = search_pdf(
+                            question,
+                            st.session_state["rag_chunks"],
+                            st.session_state["rag_index"],
+                            top_k=3
+                        )
+
+                        answer = answer_from_retrieved_chunks(
+                            question,
+                            retrieved_chunks
+                        )
+
+                        st.markdown("### 📘 Answer")
+                        st.write(answer)
+
+                        with st.expander("View retrieved passages"):
+                            for i, item in enumerate(retrieved_chunks, start=1):
+                                st.markdown(
+                                    f"**Passage {i}** "
+                                    f"(similarity: {item['similarity']:.3f})"
+                                )
+                                st.write(item["text"])
+
+                    except Exception as e:
+                        st.error("Unable to answer this question.")
+                        st.exception(e)
 
 
     st.divider()
