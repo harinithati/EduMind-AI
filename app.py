@@ -294,6 +294,40 @@ def generate_learning_path(score, topic, difficulty):
         "actions": actions
     }
 
+def analyze_skill_gaps(quiz_results):
+    """
+    Analyse incorrect quiz answers and recommend revision.
+    """
+
+    if quiz_results is None or quiz_results.empty:
+        return pd.DataFrame(
+            columns=[
+                "Question",
+                "Your Answer",
+                "Correct Answer",
+                "Status",
+                "Recommendation"
+            ]
+        )
+
+    gaps = []
+
+    for _, row in quiz_results.iterrows():
+
+        if row["Result"] != "Correct":
+            gaps.append({
+                "Question": row["Question"],
+                "Your Answer": row["Your Answer"],
+                "Correct Answer": row["Correct Answer"],
+                "Status": "Needs Revision",
+                "Recommendation": (
+                    "Review the related concept in your study material "
+                    "and practise similar questions."
+                )
+            })
+
+    return pd.DataFrame(gaps)
+
 import csv
 import os
 
@@ -784,6 +818,36 @@ elif page == "Adaptive Quiz":
                     st.write("Your answer:", row["Your Answer"])
                     st.write("Correct answer:", row["Correct Answer"])
                     st.write("Explanation:", row["Explanation"])
+
+            st.divider()
+
+st.markdown("### 🎯 Skill-Gap Analysis")
+
+quiz_results = st.session_state.get("quiz_results")
+
+if quiz_results is not None:
+
+    skill_gaps = analyze_skill_gaps(quiz_results)
+
+    if skill_gaps.empty:
+        st.success(
+            "Excellent! You answered every question correctly."
+        )
+    else:
+        st.warning(
+            f"You have {len(skill_gaps)} question(s) to review."
+        )
+
+        st.dataframe(
+            skill_gaps,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.info(
+            "Recommended action: Review the relevant concepts "
+            "and attempt another quiz."
+        )
 
             if st.button("Start Another Quiz"):
                 st.session_state["active_quiz"] = []
