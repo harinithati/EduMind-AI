@@ -944,8 +944,7 @@ if os.path.exists(PROGRESS_FILE):
             file_name="edumind_progress.csv",
             mime="text/csv"
         )
-else:
-    st.info("Complete a quiz to begin recording progress.")
+
 
 # ---------- STUDY MATERIALS ----------
 elif page == "Study Materials":
@@ -958,6 +957,9 @@ elif page == "Study Materials":
         type=["pdf"],
         key="rag_pdf_upload"
     )
+
+else:
+    st.info("Complete a quiz to begin recording progress.")
 
     if uploaded_file:
         if st.button("Process PDF", type="primary"):
