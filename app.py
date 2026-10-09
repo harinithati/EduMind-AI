@@ -1034,7 +1034,7 @@ elif page == "Study Materials":
 st.markdown("### 🎯 Your Personalized Learning Path")
 
 learning_path = generate_learning_path(
-    score=st.session_state["quiz_score"],
+    score = st.session_state.get("quiz_score", 0),
     topic=topic,
     difficulty=difficulty
 )
