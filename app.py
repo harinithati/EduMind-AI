@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 APP_TITLE = "EduMind AI"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 MAX_PDF_CHARS = 120_000
 CHUNK_SIZE = 1_500
 CHUNK_OVERLAP = 250
