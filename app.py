@@ -848,12 +848,15 @@ if quiz_results is not None:
             "Recommended action: Review the relevant concepts "
             "and attempt another quiz."
         )
+if st.session_state.get("quiz_submitted", False):
 
-            if st.button("Start Another Quiz"):
-                st.session_state["active_quiz"] = []
-                st.session_state["quiz_submitted"] = False
-                st.session_state["quiz_answers"] = {}
-                st.rerun()
+    st.success("Quiz completed!")
+
+    if st.button("Start Another Quiz"):
+        st.session_state["active_quiz"] = None
+        st.session_state["quiz_submitted"] = False
+        st.session_state["quiz_answers"] = {}
+        st.rerun()
 
 
 # ---------- SKILL GAP ----------
