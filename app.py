@@ -958,9 +958,6 @@ elif page == "Study Materials":
         key="rag_pdf_upload"
     )
 
-else:
-    st.info("Complete a quiz to begin recording progress.")
-
     if uploaded_file:
         if st.button("Process PDF", type="primary"):
 
